@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless API for a mobile Cloud PBX app - click-to-call and call-history
+  endpoints in front of a FreeSWITCH core, authenticated via Cognito.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        FREESWITCH_API_BASE: !Ref FreeswitchApiBase
+        CALL_HISTORY_TABLE: !Ref CallHistoryTable
+
+Parameters:
+  FreeswitchApiBase:
+    Type: String
+    Description: Internal base URL of the originate/CDR API (see freeswitch-cloud-pbx repo), reached via VPC link
+  CognitoUserPoolArn:
+    Type: String
+    Description: ARN of an existing Cognito User Pool used to authenticate mobile app users
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+Resources:
+
+  MobileCallApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref CognitoUserPoolArn
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+  ClickToCallFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: click_to_call.handler
+      CodeUri: src/
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds: [ !Ref FunctionSecurityGroup ]
+        SubnetIds: !Ref PrivateSubnetIds
+      Events:
+        ClickToCall:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MobileCallApi
+            Path: /calls
+            Method: post
+
+  GetCallHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: get_call_history.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref CallHistoryTable
+      Events:
+        GetCallHistory:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MobileCallApi
+            Path: /calls/{tenant_id}
+            Method: get
+
+  # Mirrors a subset of the Postgres `cdr` table (see freeswitch-cloud-pbx)
+  # for fast, app-facing reads without hitting the PBX database directly -
+  # synced by a small export job, not modeled in this template.
+  CallHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: start_stamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: start_stamp
+          KeyType: RANGE
+
+  FunctionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows Lambda to reach the FreeSWITCH automation API over the VPC link
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 10.0.0.0/16
+
+Outputs:
+  ApiUrl:
+    Description: Invoke URL for the mobile app
+    Value: !Sub "https://${MobileCallApi}.execute-api.${AWS::Region}.amazonaws.com/prod/"
