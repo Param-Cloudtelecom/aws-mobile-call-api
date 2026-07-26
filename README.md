@@ -1,5 +1,8 @@
 # aws-mobile-call-api
 
+![License](https://img.shields.io/github/license/Param-Cloudtelecom/aws-mobile-call-api) ![Top Language](https://img.shields.io/github/languages/top/Param-Cloudtelecom/aws-mobile-call-api) ![Last Commit](https://img.shields.io/github/last-commit/Param-Cloudtelecom/aws-mobile-call-api)
+
+
 A serverless AWS backend (API Gateway + Lambda + DynamoDB) for a mobile
 Cloud PBX app's two core features: **click-to-call** and **call history**.
 This is the layer between a mobile app and the telecom stack itself — it
